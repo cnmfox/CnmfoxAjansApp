@@ -1,0 +1,59 @@
+name: Build CNMFOX APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dezipper et localiser le projet
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -1)
+          if [ -n "$ZIP" ]; then unzip -o "$ZIP" -d _zipped; fi
+          PROJ=$(find . _zipped -maxdepth 4 -name package.json -not -path "*/node_modules/*" 2>/dev/null | head -1 | xargs -r dirname)
+          if [ -z "$PROJ" ]; then echo "ERREUR: package.json introuvable"; ls -R; exit 1; fi
+          echo "PROJ_DIR=$PROJ" >> $GITHUB_ENV
+          echo "Projet trouve: $PROJ"; ls -la "$PROJ"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer Capacitor
+        run: cd "$PROJ_DIR" && npm install --no-audit --no-fund
+
+      - name: Ajouter Android et synchroniser www
+        run: |
+          cd "$PROJ_DIR"
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Accepter licences Android SDK
+        run: |
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/tools/bin" >> $GITHUB_PATH
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: Construire APK debug
+        run: |
+          cd "$PROJ_DIR/android"
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cnmfox-debug-apk
+          path: '**/app-debug.apk'
